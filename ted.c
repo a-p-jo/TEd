@@ -865,15 +865,13 @@ int editorOpen(char *filename) {
 int editorSave(void) {
     int len;
     char *buf = editorRowsToString(&len);
-    int fd = open(E.filename,O_RDWR|O_CREAT,0644);
-    if (fd == -1) goto writeerr;
+    FILE * fp = fopen(E.filename,"w+");
+    if (fp == NULL) goto writeerr;
 
-    /* Use truncate + a single write(2) call in order to make saving
-     * a bit safer, under the limits of what we can do in a small editor. */
-    if (ftruncate(fd,len) == -1) goto writeerr;
-    if (write(fd,buf,len) != len) goto writeerr;
+    
+    if (fwrite(buf,1,len,fp) != len) goto writeerr;
 
-    close(fd);
+    fclose(fp);
     free(buf);
     E.dirty = 0;
     editorSetStatusMessage("%d bytes written on disk", len);
@@ -881,7 +879,7 @@ int editorSave(void) {
 
 writeerr:
     free(buf);
-    if (fd != -1) close(fd);
+    if (fp != NULL) fclose(fp);
     editorSetStatusMessage("Can't save! I/O error: %s",strerror(errno));
     return 1;
 }
