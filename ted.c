@@ -38,7 +38,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#define TEd_VERSION "1"
+#define TEd_VERSION "1.1"
 
 #ifdef __linux__
 #define _POSIX_C_SOURCE 200809L
