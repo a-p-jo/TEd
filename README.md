@@ -1,10 +1,10 @@
 # TEd v1.1
 
-TEd is a customisation of the kilo editor.
+TEd is a customisation of [the kilo editor](https://github.com/antirez/kilo).
 
 ### Changelog
 
-#### v1
+#### v1 : Bugfixing
 0. Used [kilo.c](https://raw.githubusercontent.com/antirez/kilo/master/kilo.c), renamed to TEd
 1. Added `system("clear")` to clear screen upon exit.
 2. Added [#75](https://github.com/antirez/kilo/pull/75/files)
@@ -15,7 +15,7 @@ TEd is a customisation of the kilo editor.
 7. Added [#19](https://github.com/antirez/kilo/pull/19)
 8. Added [#17](https://github.com/antirez/kilo/pull/17)
 
-#### v1.1
+#### v1.1 : Touch-up
 0. Used TEd.c
 1. Converted `editorSave()` to use `FILE *` rather than file descriptors.
 2. Added [#27](https://github.com/antirez/kilo/pull/27/files)
