@@ -38,11 +38,11 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#define TEd_VERSION "1.1"
+#define TEd_VERSION "1.2"
 
 #ifdef __linux__
 #define _POSIX_C_SOURCE 200809L
-#endif
+#endif 
 
 #include <termios.h>
 #include <stdlib.h>
@@ -88,9 +88,9 @@ struct editorSyntax {
 
 /* This structure represents a single line of the file we are editing. */
 typedef struct erow {
-    int idx;            /* Row index in the file, zero-based. */
-    int size;           /* Size of the row, excluding the null term. */
-    int rsize;          /* Size of the rendered row. */
+    uint_fast64_t idx;            /* Row index in the file, zero-based. */
+    uint_fast64_t size;           /* Size of the row, excluding the null term. */
+    uint_fast64_t rsize;          /* Size of the rendered row. */
     char *chars;        /* Row content. */
     char *render;       /* Row content "rendered" for screen (for TABs). */
     unsigned char *hl;  /* Syntax highlight type for each character in render.*/
@@ -103,15 +103,15 @@ typedef struct hlcolor {
 } hlcolor;
 
 struct editorConfig {
-    int cx,cy;  /* Cursor x and y position in characters */
-    int rowoff;     /* Offset of row displayed. */
-    int coloff;     /* Offset of column displayed. */
+    uint_fast64_t cx,cy;  /* Cursor x and y position in characters */
+    uint_fast64_t rowoff;     /* Offset of row displayed. */
+    uint_fast64_t coloff;     /* Offset of column displayed. */
     int screenrows; /* Number of rows that we can show */
     int screencols; /* Number of cols that we can show */
-    int numrows;    /* Number of rows */
-    int rawmode;    /* Is terminal raw mode enabled? */
+    uint_fast64_t numrows;    /* Number of rows */
+    uint_fast8_t rawmode;    /* Is terminal raw mode enabled? */
     erow *row;      /* Rows */
-    int dirty;      /* File modified but not saved. */
+    uint_fast8_t dirty;      /* File modified but not saved. */
     char *filename; /* Currently open filename */
     char statusmsg[80];
     time_t statusmsg_time;
@@ -157,7 +157,7 @@ void editorSetStatusMessage(const char *fmt, ...);
  * dot, it is matched as the last past of the filename, for example ".c".
  * Otherwise the pattern is just searched inside the filenme, like "Makefile").
  *
- * The list of keywords to highlight is just a list of words, however if they
+ * The list of keywords to highlight is just a list of words, however if
  * a trailing '|' character is added at the end, they are highlighted in
  * a different color, so that you can have two different sets of keywords.
  *
@@ -261,7 +261,7 @@ fatal:
 /* Read a key from the terminal put in raw mode, trying to handle
  * escape sequences. */
 int editorReadKey(int fd) {
-    int nread;
+    ssize_t nread;
     char c, seq[3];
     while ((nread = read(fd,&c,1)) == 0);
     if (nread == -1) exit(1);
@@ -380,12 +380,19 @@ int is_separator(int c) {
 /* Set every byte of row->hl (that corresponds to every character in the line)
  * to the right syntax highlight type (HL_* defines). */
 void editorUpdateSyntax(erow *row) {
-    row->hl = realloc(row->hl,row->rsize);
+    void * tmp = realloc(row->hl,row->rsize);
+    if(tmp == NULL)
+    {
+        fprintf(stderr,"realloc(row->hl,%llu) failed in editorUpdateSyntax()\n",row->rsize);
+        exit(1);
+    }
+    row->hl = tmp;
+
     memset(row->hl,HL_NORMAL,row->rsize);
 
     if (E.syntax == NULL) return; /* No syntax, everything is HL_NORMAL. */
 
-    int i, prev_sep, in_string, in_comment;
+    uint_fast64_t i, prev_sep, in_string, in_comment;
     char *p;
     char **keywords = E.syntax->keywords;
     char *scs = E.syntax->singleline_comment_start;
@@ -490,9 +497,9 @@ void editorUpdateSyntax(erow *row) {
         /* Handle keywords and lib calls */
         if (prev_sep) {
             int j;
-            int ileft = row->rsize - i;
+            int_fast64_t ileft = row->rsize - i;
             for (j = 0; keywords[j]; j++) {
-                int klen = strlen(keywords[j]);
+                unsigned long klen = strlen(keywords[j]);
                 int kw2 = keywords[j][klen-1] == '|';
                 if (kw2) klen--;
 
@@ -548,7 +555,7 @@ void editorSelectSyntaxHighlight(char *filename) {
         unsigned int i = 0;
         while(s->filematch[i]) {
             char *p;
-            int patlen = strlen(s->filematch[i]);
+            unsigned long patlen = strlen(s->filematch[i]);
             if ((p = strstr(filename,s->filematch[i])) != NULL) {
                 if (s->filematch[i][0] != '.' || p[patlen] == '\0') {
                     E.syntax = s;
@@ -563,11 +570,11 @@ void editorSelectSyntaxHighlight(char *filename) {
 /* ======================= Editor rows implementation ======================= */
 
 /* how many screen columns does a row prefix need ? */
-int getRenderCol( erow *row, int coloff ) {                                   
+int getRenderCol( erow *row, uint_fast64_t coloff ) {                                   
     int cx = 0;                                                              
     int cxx = 0;
     if (!row) return coloff; /* safety */
-    for (int j = 0; j < coloff; j++) {                                       
+    for (uint_fast64_t j = 0; j < coloff; j++) {                                       
         if (j < row->size && row->chars[j] == TAB) {                          
             cx += 8-(cx % 8); /* #define KILO_TAB_WIDTH 8 ! */
             cxx = 1;
@@ -584,17 +591,26 @@ void editorUpdateRow(erow *row) {
 
    /* Create a version of the row we can directly print on the screen,
      * respecting tabs, substituting non printable characters with '?'. */
+    unsigned long long allocsize;
+
     free(row->render);
     for (j = 0; j < row->size; j++)
         if (row->chars[j] == TAB) tabs++;
-    unsigned long long allocsize =
-        (unsigned long long) row->size + tabs*8 + nonprint*9 + 1;
+    allocsize = (unsigned long long) row->size + tabs*8 + nonprint*9 + 1;
     if (allocsize > UINT32_MAX) {
-        printf("Some line of the edited file is too long for TEd\n");
+        fprintf(stderr,"Some line of the edited file is too long for TEd\n");
         exit(1);
     }
 
-    row->render = malloc(row->size + tabs*8 + nonprint*9 + 1);
+    void * tmp = malloc(row->size + tabs*8 + nonprint*9 + 1);
+
+    if(tmp == NULL) {
+        fprintf(stderr,"Error : malloc(%llu) failed at editorUpdateRow() for row %llu\n",allocsize,(row->idx)+1);
+        exit(1);
+    }
+
+    row->render = tmp;
+
     idx = 0;
     for (j = 0; j < row->size; j++) {
         if (row->chars[j] == TAB) {
@@ -615,13 +631,29 @@ void editorUpdateRow(erow *row) {
  * if required. */
 void editorInsertRow(int at, char *s, size_t len) {
     if (at > E.numrows) return;
-    E.row = realloc(E.row,sizeof(erow)*(E.numrows+1));
+
+    void * tmp = realloc(E.row,sizeof(erow)*(E.numrows+1));
+    if(tmp == NULL)
+    {
+        fprintf(stderr,"realloc(E.row,%llu) failed at editorInsertRow() for row %d\n",sizeof(erow)*(E.numrows+1),at);
+        exit(1);
+    }
+    E.row = tmp;
+
     if (at != E.numrows) {
         memmove(E.row+at+1,E.row+at,sizeof(E.row[0])*(E.numrows-at));
         for (int j = at+1; j <= E.numrows; j++) E.row[j].idx++;
     }
     E.row[at].size = len;
-    E.row[at].chars = malloc(len+1);
+
+    tmp = malloc(len+1);
+    if(tmp == NULL)
+    {
+        fprintf(stderr,"malloc(%lu) failed at editorInsertRow() for row %d\n",len + 1,at);
+        exit(1);
+    }
+    E.row[at].chars = tmp;
+
     memcpy(E.row[at].chars,s,len+1);
     E.row[at].hl = NULL;
     E.row[at].hl_oc = 0;
@@ -656,7 +688,7 @@ void editorDelRow(int at) {
 
 /* Turn the editor rows into a single heap-allocated string.
  * Returns the pointer to the heap-allocated string and populate the
- * integer pointed by 'buflen' with the size of the string, escluding
+ * integer pointed by 'buflen' with the size of the string, excluding
  * the final nulterm. */
 char *editorRowsToString(int *buflen) {
     char *buf = NULL, *p;
@@ -669,7 +701,14 @@ char *editorRowsToString(int *buflen) {
     *buflen = totlen;
     totlen++; /* Also make space for nulterm */
 
-    p = buf = malloc(totlen);
+    void * tmp = malloc(totlen);
+    if(tmp == NULL)
+    {
+        fprintf(stderr,"malloc(%d) failed at editorRowsToString()\n",totlen);
+        exit(1);
+    }
+    p = buf = tmp;
+
     for (j = 0; j < E.numrows; j++) {
         memcpy(p,E.row[j].chars,E.row[j].size);
         p += E.row[j].size;
@@ -688,14 +727,26 @@ void editorRowInsertChar(erow *row, int at, int c) {
          * current length by more than a single character. */
         int padlen = at-row->size;
         /* In the next line +2 means: new char and null term. */
-        row->chars = realloc(row->chars,row->size+padlen+2);
+        void * tmp = realloc(row->chars,row->size+padlen+2);
+        if(tmp == NULL)
+        {
+            fprintf(stderr,"realloc(row->chars,%llu) failed in editorRowInsertChar()'s if() at row %d\n",row->size+padlen+2,at);
+            exit(1);
+        }
+        row->chars = tmp;
         memset(row->chars+row->size,' ',padlen);
         row->chars[row->size+padlen+1] = '\0';
         row->size += padlen+1;
     } else {
         /* If we are in the middle of the string just make space for 1 new
          * char plus the (already existing) null term. */
-        row->chars = realloc(row->chars,row->size+2);
+        void * tmp = realloc(row->chars,row->size+2);
+        if(tmp == NULL)
+        {
+            fprintf(stderr,"realloc(row->chars,%llu) failed in editorRowInsertChar()'s else() at row %d\n",row->size+2,at);
+            exit(1);
+        }
+        row->chars = tmp;
         memmove(row->chars+at+1,row->chars+at,row->size-at+1);
         row->size++;
     }
@@ -706,7 +757,14 @@ void editorRowInsertChar(erow *row, int at, int c) {
 
 /* Append the string 's' at the end of a row */
 void editorRowAppendString(erow *row, char *s, size_t len) {
-    row->chars = realloc(row->chars,row->size+len+1);
+    void * tmp = realloc(row->chars,row->size+len+1);
+    if(tmp == NULL)
+    {
+        fprintf(stderr,"realloc(row->chars,%llu) failed in editorRowAppendString()\n",row->size+len+1);
+        exit(1);
+    }
+    row->chars = tmp;
+
     memcpy(row->chars+row->size,s,len);
     row->size += len;
     row->chars[row->size] = '\0';
@@ -736,7 +794,7 @@ void editorInsertChar(int c) {
     }
     else {
         /* If the row where the cursor is currently located does not exist in our
-         * logical representaion of the file, add enough empty rows as needed. */
+         * logical representation of the file, add enough empty rows as needed. */
         while(E.numrows <= filerow)
             editorInsertRow(E.numrows,"",0);
     }
@@ -830,14 +888,22 @@ int editorOpen(char *filename) {
     E.dirty = 0;
     free(E.filename);
     size_t fnlen = strlen(filename)+1;
-    E.filename = malloc(fnlen);
+
+    void * tmp = malloc(fnlen);
+    if(tmp == NULL)
+    {
+        fprintf(stderr, "malloc(%lu) failed at editorOpen(%s)\n",fnlen,filename);
+        exit(1);
+    }
+    E.filename = tmp;
+
     memcpy(E.filename,filename,fnlen);
 
 
     fp = fopen(filename,"r");
     if (!fp) {
         if (errno != ENOENT) {
-            perror("Opening file");
+            perror("Error Opening file");
             exit(1);
         }
         return 1;
@@ -874,7 +940,7 @@ int editorSave(void) {
     fclose(fp);
     free(buf);
     E.dirty = 0;
-    editorSetStatusMessage("%d bytes written on disk", len);
+    editorSetStatusMessage("%s : %d bytes written",E.filename, len);
     return 0;
 
 writeerr:
@@ -898,7 +964,13 @@ struct abuf {
 #define ABUF_INIT {NULL,0}
 
 void abAppend(struct abuf *ab, const char *s, int len) {
-    char *new = realloc(ab->b,ab->len+len);
+    void * tmp = realloc(ab->b,ab->len+len);
+    if(tmp == NULL)
+    {
+        fprintf(stderr,"realloc(ab->b,%d) failed in abAppend()\n",ab->len+len);
+        exit(1);
+    }
+    char *new = tmp;
 
     if (new == NULL) return;
     memcpy(new+ab->len,s,len);
@@ -927,7 +999,7 @@ void editorRefreshScreen(void) {
             if (E.numrows == 0 && y == E.screenrows/3) {
                 char welcome[80];
                 int welcomelen = snprintf(welcome,sizeof(welcome),
-                    "TEd editor -- version %s\x1b[0K\r\n", TEd_VERSION);
+                    "TEd -- version %s\x1b[0K\r\n", TEd_VERSION);
                 int padding = (E.screencols-welcomelen)/2;
                 if (padding) {
                     abAppend(&ab,"~",1);
@@ -989,10 +1061,10 @@ void editorRefreshScreen(void) {
     abAppend(&ab,"\x1b[0K",4);
     abAppend(&ab,"\x1b[7m",4);
     char status[80], rstatus[80];
-    int len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
+    int len = snprintf(status, sizeof(status), "%.20s - %llu lines %s",
         E.filename, E.numrows, E.dirty ? "(modified)" : "");
     int rlen = snprintf(rstatus, sizeof(rstatus),
-        "%d/%d",E.rowoff+E.cy+1,E.numrows);
+        "%llu/%llu",E.rowoff+E.cy+1,E.numrows);
     if (len > E.screencols) len = E.screencols;
     abAppend(&ab,status,len);
     while(len < E.screencols) {
@@ -1022,7 +1094,7 @@ void editorRefreshScreen(void) {
         /* Use display widths to calculate cursor position */
         cx = getRenderCol(row, cx+E.cx+E.coloff) - getRenderCol(row, E.coloff);
     }
-    snprintf(buf,sizeof(buf),"\x1b[%d;%dH",E.cy+1,cx+1);
+    snprintf(buf,sizeof(buf),"\x1b[%llu;%dH",E.cy+1,cx+1);
     abAppend(&ab,buf,strlen(buf));
     abAppend(&ab,"\x1b[?25h",6); /* Show cursor. */
     write(STDOUT_FILENO,ab.b,ab.len);
@@ -1119,7 +1191,15 @@ void editorFind(int fd) {
                 last_match = current;
                 if (row->hl) {
                     saved_hl_line = current;
-                    saved_hl = malloc(row->rsize);
+
+                    void * tmp = malloc(row->rsize);
+                    if(tmp == NULL)
+                    {
+                        fprintf(stderr, "malloc(%llu) failed in editorFind()->while(1)->if(find_next)->if(match)\n",row->rsize);
+                        exit(1);
+                    }
+                    saved_hl = tmp;
+
                     memcpy(saved_hl,row->hl,row->rsize);
                     memset(row->hl+match_offset,HL_MATCH,qlen);
                 }
@@ -1216,7 +1296,7 @@ void editorMoveCursor(int key) {
 
 /* Process events arriving from the standard input, which is, the user
  * is typing stuff on the terminal. */
-#define TEd_QUIT_TIMES 3
+#define TEd_QUIT_TIMES 1
 void editorProcessKeypress(int fd) {
     /* When the file is modified, requires Ctrl-q to be pressed N times
      * before actually quitting. */
@@ -1234,8 +1314,8 @@ void editorProcessKeypress(int fd) {
     case CTRL_Q:        /* Ctrl-q */
         /* Quit if the file was already saved. */
         if (E.dirty && quit_times) {
-            editorSetStatusMessage("WARNING!!! File has unsaved changes. "
-                "Press Ctrl-Q %d more times to quit.", quit_times);
+            editorSetStatusMessage("WARNING : File has unsaved changes. "
+                "Press Ctrl-Q %d more time to abandon.", quit_times);
             quit_times--;
             return;
         }
